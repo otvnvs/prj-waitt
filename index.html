@@ -1,10 +1,190 @@
 <!DOCTYPE html>
-<html lang="af">
-	<head>
-		<meta charset="utf-8">
-		<title>WAITT</title>
-	</head>
-	<body>
-		<h1>stub</h1>
-	</body>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Rekenaarterme / Dictionary</title>
+  <link rel="preconnect" href="https://googleapis.com"/>
+  <link href="https://googleapis.com/css2?family=Syne:wght@400;700;800&family=Syne+Mono&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --ink: #cdd9e5;
+      --muted: #4d6478;
+      --accent: #58a6ff;
+      --border: #243447;
+    }
+ 
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Syne', sans-serif;
+      line-height: 1.6;
+      padding: 2rem;
+    }
+
+    .container { max-width: 800px; margin: 0 auto; }
+
+    header {
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      padding: 2rem 0;
+      border-bottom: 1px solid var(--border);
+      z-index: 10;
+      margin-bottom: 2rem;
+    }
+
+    h1 { font-weight: 800; font-size: 2.5rem; margin-bottom: 1rem; }
+    h1 em { font-style: normal; color: var(--accent); }
+
+    .search-box {
+      width: 100%;
+      padding: 1rem;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      color: var(--ink);
+      font-family: 'Syne Mono', monospace;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-box:focus { border-color: var(--accent); }
+
+    #results { list-style: none; margin-top: 1rem; }
+    
+    .term-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      padding: 1rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      animation: fadeIn 0.3s ease forwards;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .en { font-weight: 700; color: var(--ink); }
+    .af { font-family: 'Syne Mono', monospace; color: var(--accent); }
+
+    .status {
+      font-family: 'Syne Mono', monospace;
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 0.5rem;
+    }
+
+    @media (max-width: 600px) {
+      .term-row { grid-template-columns: 1fr; gap: 0.2rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Rekenaar<em>terme</em></h1>
+    <input type="text" id="search" class="search-box" placeholder="Search English or Afrikaans term..." autofocus>
+    <div id="status" class="status">// initializing dictionary...</div>
+  </header>
+
+  <ul id="results"></ul>
+</div>
+
+<script>
+let chunkCache = new Map(); // Stores { prefix: [data] }
+let loadedPrefixes = new Set(); // To check map.json contents if needed
+const PREFIX_LEN = 2;
+
+const searchInput = document.getElementById('search');
+const resultsList = document.getElementById('results');
+const statusLabel = document.getElementById('status');
+
+// 1. Initialise - just clear the UI and prepare
+async function init() {
+  try {
+    // Optional: Fetch map.json if you want to validate prefixes before fetching
+    const res = await fetch('./res/chunks/map.json');
+    if (res.ok) {
+      const map = await res.json();
+      loadedPrefixes = new Set(map);
+      statusLabel.textContent = `// Dictionary ready. ${map.length} chunks available.`;
+    }
+  } catch (err) {
+    statusLabel.textContent = `// Ready (on-demand loading enabled)`;
+  }
+}
+
+// 2. Sanitise the prefix (Must match your Node.js logic)
+function getPrefix(str) {
+  let p = str.substring(0, PREFIX_LEN).toLowerCase().padEnd(PREFIX_LEN, '_');
+  return p.replace(/[^a-z0-9_]/g, '-');
+}
+
+// 3. Search Logic
+async function handleSearch() {
+  const query = searchInput.value.toLowerCase().trim();
+  
+  if (query.length < 1) {
+    resultsList.innerHTML = '';
+    statusLabel.textContent = `// Waiting...`;
+    return;
+  }
+
+  // Determine target filename
+  // 1 letter -> "a.json"
+  // 2+ letters -> "ap.json"
+  const fileName = query.length === 1 
+    ? query 
+    : getPrefix(query);
+
+  if (!chunkCache.has(fileName)) {
+    try {
+      const res = await fetch(`./res/chunks/${fileName}.json`);
+      const data = res.ok ? await res.json() : [];
+      chunkCache.set(fileName, data);
+    } catch (e) {
+      chunkCache.set(fileName, []);
+    }
+  }
+
+  const currentData = chunkCache.get(fileName) || [];
+  const filtered = currentData.filter(item => 
+    item.en.toLowerCase().includes(query) || 
+    item.af.toLowerCase().includes(query)
+  );
+
+  render(filtered);
+  
+  statusLabel.textContent = query.length === 1 
+    ? `// Previewing first 5 terms for "${query.toUpperCase()}". Keep typing...`
+    : `// ${filtered.length} matches found in section [${fileName}].`;
+}
+
+
+function render(data) {
+  if (data.length === 0) {
+    resultsList.innerHTML = '<li class="state">No matches found in this section.</li>';
+    return;
+  }
+  resultsList.innerHTML = data.map(item => `
+    <li class="term-row">
+      <span class="en">${item.en}</span>
+      <span class="af">${item.af}</span>
+    </li>
+  `).join('');
+}
+
+// Listen for typing
+searchInput.addEventListener('input', handleSearch);
+
+init();
+</script>
+
+</body>
 </html>
+
